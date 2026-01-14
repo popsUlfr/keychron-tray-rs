@@ -1,0 +1,11 @@
+[package]
+name = "keychron-tray-rs"
+description = "Tray applet for Keychron mice and keyboards."
+version = "0.1.0"
+edition = "2024"
+authors = ["Philipp Richter <richterphilipp.pops@gmail.com>"]
+license = "GPL-3.0"
+
+[dependencies]
+hidapi = "2.6"
+tokio = { version = "1.49", features = ["full"] }
