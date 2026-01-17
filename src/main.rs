@@ -1,70 +1,37 @@
-use hidapi::{BusType, HidApi};
+use tokio::time;
 
-use crate::report::TryMerge;
+use crate::{keychron_hid::KeychronHid, tray::Tray};
+use std::{error::Error, time::Duration};
 
+mod keychron_device;
+mod keychron_hid;
 mod report;
-
-const KEYCHRON_VENDOR_ID: u16 = 0x3434;
-const KEYCHRON_PRODUCT_ID: u16 = 0xd028;
-const KEYCHRON_USAGE: u16 = 0x1;
-const KEYCHRON_USAGE_PAGE: u16 = 0xffc1;
+mod tray;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    HidApi::disable_device_discovery();
-    let mut hid_api = HidApi::new()?;
-    // TODO: use Keychron name to search instead of hardcoded ids
-    hid_api.add_devices(KEYCHRON_VENDOR_ID, KEYCHRON_PRODUCT_ID)?;
-
-    let mut dlit = hid_api.device_list();
-    let dev = dlit
-        .find(|d| {
-            d.bus_type() as u8 == BusType::Usb as u8
-                && d.usage() == KEYCHRON_USAGE
-                && d.usage_page() == KEYCHRON_USAGE_PAGE
-        })
-        .ok_or("No matching devices found.")?;
-
-    println!("{:#?}", dev);
-    let hid_dev_read = dev.open_device(&hid_api)?;
-    let hid_dev_write = dev.open_device(&hid_api)?;
-
-    let handle = tokio::spawn(async move {
-        let mut buf = [0u8; 64];
-        let mut r = report::Report::default();
-        loop {
-            let buf_size;
-            match hid_dev_read.read(&mut buf) {
-                Ok(s) => buf_size = s,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    break;
-                }
-            }
-            if buf_size == 0 {
-                continue;
-            }
-            // strip reportId from buffer
-            match r.merge(&buf[1..buf_size]) {
-                Ok(r) => println!("{:#?}", r),
-                Err(e) => eprintln!("{}", e),
-            }
+    let mut tray_app = Tray::new()?;
+    let mut keychron_hid = KeychronHid::new()?;
+    let dev = loop {
+        let devs = keychron_hid.list_compatible_devices()?;
+        if devs.is_empty() {
+            time::sleep(Duration::from_secs(5)).await;
         }
-    });
+        break devs[0].clone();
+    };
 
-    {
-        let mut req_info = [0u8; 21];
-        req_info[0] = 0xb5;
-        req_info[1] = 2;
-        req_info[2] = 1;
-        hid_dev_write.write(&req_info)?;
-    }
-    {
-        let mut req_full = [0u8; 64];
-        req_full[0] = 0xb3;
-        req_full[1] = 6;
-        hid_dev_write.write(&req_full)?;
-    }
-    handle.await?;
+    let (mut report_rx, listen_handle) = keychron_hid.listen(&dev)?;
+    let report_handle: tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>> =
+        tokio::spawn(async move {
+            loop {
+                report_rx.changed().await?;
+                let r = report_rx.borrow_and_update();
+                tray_app.set_battery_level(r.power.value);
+            }
+        });
+    keychron_hid.poke_device(&dev)?;
+    let (lres, rres) = tokio::join!(listen_handle, report_handle);
+    let _ = lres?;
+    let _ = rres?;
     Ok(())
 }

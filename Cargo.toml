@@ -8,4 +8,7 @@ license = "GPL-3.0"
 
 [dependencies]
 hidapi = "2.6"
+num_enum = "0.7"
 tokio = { version = "1.49", features = ["full"] }
+trayicon = { version = "0.3", git = "https://github.com/Ciantic/trayicon-rs.git", branch = "master" }
+webbrowser = "1.0"

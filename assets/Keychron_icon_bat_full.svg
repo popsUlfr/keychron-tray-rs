@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   version="1.1"
+   id="svg1"
+   width="39.253334"
+   height="39.253334"
+   viewBox="0 0 39.253335 39.253334"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <g
+     id="g1"
+     transform="translate(-37.795468,-226.7724)">
+    <path
+       id="path16"
+       d="m 0,0 c 0,-8.13 -6.59,-14.72 -14.72,-14.72 -8.13,0 -14.72,6.59 -14.72,14.72 0,8.13 6.59,14.72 14.72,14.72 C -6.59,14.72 0,8.13 0,0"
+       style="fill:#040000;fill-opacity:1;fill-rule:nonzero;stroke:none"
+       transform="matrix(1.3333333,0,0,-1.3333333,77.0488,246.39907)"
+       clip-path="none" />
+    <g
+       id="g88"
+       style="display:inline">
+      <path
+         id="path18"
+         d="m 42.167,91.838 h -1.796 v 13.896 h 1.796 z"
+         style="fill:#ffffff;fill-opacity:1;fill-rule:nonzero;stroke:none"
+         transform="matrix(1.3333333,0,0,-1.3333333,0,377.95333)" />
+      <path
+         id="path19"
+         d="m 36.806,105.751 h 9.135 v -1.797 h -9.135 z"
+         style="fill:#ffffff;fill-opacity:1;fill-rule:nonzero;stroke:none"
+         transform="matrix(1.3333333,0,0,-1.3333333,0,377.95333)" />
+      <path
+         id="path20"
+         d="m 0,0 -1.272,1.272 6.75,6.731 h 2.544 z"
+         style="fill:#ffffff;fill-opacity:1;fill-rule:nonzero;stroke:none"
+         transform="matrix(1.3333333,0,0,-1.3333333,55.583333,251.54627)" />
+      <path
+         id="path21"
+         d="M 0,0 1.362,1.178 7.229,-5.855 4.694,-5.859 Z"
+         style="fill:#ffffff;fill-opacity:1;fill-rule:nonzero;stroke:none"
+         transform="matrix(1.3333333,0,0,-1.3333333,57.7396,247.72)" />
+    </g>
+    <path
+       id="path22"
+       d="m 0,0 c -5.897,0 -10.695,4.798 -10.695,10.696 0,5.898 4.798,10.696 10.695,10.696 4.44,0 8.255,-2.721 9.871,-6.582 h 2.008 C 10.169,19.731 5.496,23.279 0,23.279 c -6.938,0 -12.583,-5.645 -12.583,-12.583 0,-6.939 5.645,-12.583 12.583,-12.583 5.52,0 10.211,3.578 11.902,8.533 H 9.894 C 8.294,2.751 4.464,0 0,0"
+       style="fill:#00ff00;fill-opacity:1;fill-rule:nonzero;stroke:none"
+       transform="matrix(1.3333333,0,0,-1.3333333,57.8756,260.66013)"
+       clip-path="none" />
+  </g>
+</svg>
