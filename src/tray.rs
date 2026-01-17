@@ -9,16 +9,28 @@ const ICON_BAT_GOOD_BYTES: &[u8] = include_bytes!("../assets/Keychron_icon_bat_g
 const ICON_BAT_HALF_BYTES: &[u8] = include_bytes!("../assets/Keychron_icon_bat_half.ico");
 const ICON_BAT_LOW_BYTES: &[u8] = include_bytes!("../assets/Keychron_icon_bat_low.ico");
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TrayEvent {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+enum TrayEvent {
+    #[default]
+    None,
     Configure,
     Close,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Device {
+    pub name: String,
+    pub version: String,
+    pub battery: u8,
+    pub dpi: u16,
+    pub polling_rate_level: u8,
 }
 
 pub struct Tray {
     tray_icon: TrayIcon<TrayEvent>,
     icon: Icon,
     bat_icons: [Icon; 4],
+    dev: Option<Device>,
 }
 
 impl Tray {
@@ -38,6 +50,7 @@ impl Tray {
                 TrayEvent::Close => {
                     exit(0);
                 }
+                _ => (),
             })
             .menu(
                 MenuBuilder::new()
@@ -51,25 +64,66 @@ impl Tray {
             tray_icon: tray_icon,
             icon: icon_normal,
             bat_icons: [icon_bat_low, icon_bat_half, icon_bat_good, icon_bat_full],
+            dev: None,
         })
     }
 
-    pub fn set_device_name(&mut self, name: &str) {}
-
-    pub fn set_battery_level(&mut self, bat_level: u8) {
-        let bl = bat_level.clamp(0, 100);
-        let mut tis = TrayIconStatus::Passive;
-        self.tray_icon.set_tooltip(format!("{}%", bl).as_str()).ok();
-        if bl <= 25 {
-            tis = TrayIconStatus::NeedsAttention;
-            self.tray_icon.set_icon(&self.bat_icons[0]).ok();
-        } else if bl <= 50 {
-            self.tray_icon.set_icon(&self.bat_icons[1]).ok();
-        } else if bl <= 75 {
-            self.tray_icon.set_icon(&self.bat_icons[2]).ok();
-        } else {
-            self.tray_icon.set_icon(&self.bat_icons[3]).ok();
+    fn gen_menu(&self) -> MenuBuilder<TrayEvent> {
+        let mut mb = MenuBuilder::new();
+        if let Some(dev) = &self.dev {
+            mb = mb
+                .item(format!("⌄🖱️{}⌄", dev.name).as_str(), TrayEvent::None)
+                .separator()
+                .item(
+                    format!(
+                        "{} {}%",
+                        if dev.battery <= 25 { "🪫" } else { "🔋" },
+                        dev.battery
+                    )
+                    .as_str(),
+                    TrayEvent::None,
+                )
+                .item(format!("📏Dpi: {}", dev.dpi).as_str(), TrayEvent::None)
+                .item(
+                    format!("⏱Poll: {}", dev.polling_rate_level).as_str(),
+                    TrayEvent::None,
+                )
+                .item(format!("🛈 {}", dev.version).as_str(), TrayEvent::None)
+                .separator();
         }
-        self.tray_icon.set_status(tis).ok();
+        mb.item("Configure", TrayEvent::Configure)
+            .separator()
+            .item("✖ Close", TrayEvent::Close)
+    }
+
+    pub fn update_device(&mut self, dev: Device) {
+        self.dev = Some(dev);
+        if let Some(dev) = &mut self.dev {
+            dev.battery = dev.battery.clamp(0, 100);
+            let mut tis = TrayIconStatus::Passive;
+            self.tray_icon
+                .set_tooltip(
+                    format!(
+                        "{}{}%",
+                        if dev.battery <= 25 { "🪫" } else { "🔋" },
+                        dev.battery
+                    )
+                    .as_str(),
+                )
+                .ok();
+            if dev.battery <= 25 {
+                tis = TrayIconStatus::NeedsAttention;
+                self.tray_icon.set_icon(&self.bat_icons[0]).ok();
+            } else if dev.battery <= 50 {
+                self.tray_icon.set_icon(&self.bat_icons[1]).ok();
+            } else if dev.battery <= 75 {
+                self.tray_icon.set_icon(&self.bat_icons[2]).ok();
+            } else {
+                self.tray_icon.set_icon(&self.bat_icons[3]).ok();
+            }
+            self.tray_icon.set_status(tis).ok();
+
+            self.tray_icon.set_menu(&self.gen_menu()).ok();
+        }
     }
 }

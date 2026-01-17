@@ -26,7 +26,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 report_rx.changed().await?;
                 let r = report_rx.borrow_and_update();
-                tray_app.set_battery_level(r.power.value);
+                tray_app.update_device(tray::Device {
+                    name: match r.keychron_device() {
+                        Ok(kd) => kd.to_string(),
+                        Err(_) => "".to_string(),
+                    },
+                    version: r.fr_version_string(),
+                    battery: r.power.value,
+                    dpi: *r
+                        .dpi
+                        .levels_val
+                        .get(r.dpi.level[0] as usize)
+                        .unwrap_or(&0u16),
+                    polling_rate_level: r.polling_rate.level[0],
+                });
             }
         });
     keychron_hid.poke_device(&dev)?;
