@@ -1,5 +1,6 @@
-use std::process::exit;
+use std::{error, fmt, process::exit, str};
 
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use trayicon::{Icon, MenuBuilder, TrayIcon, TrayIconBuilder, TrayIconStatus};
 
 const KEYCHRON_URL: &str = "https://launcher.keychron.com";
@@ -15,6 +16,62 @@ enum TrayEvent {
     None,
     Configure,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[repr(u8)]
+enum PollLevel {
+    #[default]
+    Level0,
+    Level1,
+    Level2,
+    Level3,
+    Level4,
+    Level5,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
+pub struct ParsePollLevelError;
+
+impl fmt::Display for ParsePollLevelError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("Invalid poll level given")
+    }
+}
+
+impl error::Error for ParsePollLevelError {
+    fn description(&self) -> &str {
+        "invalid poll level"
+    }
+}
+
+impl fmt::Display for PollLevel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            PollLevel::Level0 => f.write_str("⚪  "),
+            PollLevel::Level1 => f.write_str(" 🔵 "),
+            PollLevel::Level2 => f.write_str("  🔴"),
+            PollLevel::Level3 => f.write_str("⚪🔵 "),
+            PollLevel::Level4 => f.write_str("⚪ 🔴"),
+            PollLevel::Level5 => f.write_str("⚪🔵🔴"),
+        }
+    }
+}
+
+impl str::FromStr for PollLevel {
+    type Err = ParsePollLevelError;
+
+    fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+        match s.replace(" ", "").to_uppercase().as_str() {
+            "⚪" => Ok(PollLevel::Level0),
+            "🔵" => Ok(PollLevel::Level1),
+            "🔴" => Ok(PollLevel::Level2),
+            "⚪🔵" => Ok(PollLevel::Level3),
+            "⚪🔴" => Ok(PollLevel::Level4),
+            "⚪🔵🔴" => Ok(PollLevel::Level5),
+            _ => Err(ParsePollLevelError),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -59,7 +116,7 @@ impl Tray {
                     .item("✖ Close", TrayEvent::Close),
             )
             .build()?;
-        tray_icon.set_status(trayicon::TrayIconStatus::Passive).ok();
+        tray_icon.set_status(trayicon::TrayIconStatus::Active).ok();
         Ok(Tray {
             tray_icon: tray_icon,
             icon: icon_normal,
@@ -72,23 +129,27 @@ impl Tray {
         let mut mb = MenuBuilder::new();
         if let Some(dev) = &self.dev {
             mb = mb
-                .item(format!("⌄🖱️{}⌄", dev.name).as_str(), TrayEvent::None)
+                .item(format!("🖱️{}", dev.name).as_str(), TrayEvent::None)
                 .separator()
                 .item(
                     format!(
-                        "{} {}%",
+                        "┣{}{}%",
                         if dev.battery <= 25 { "🪫" } else { "🔋" },
                         dev.battery
                     )
                     .as_str(),
                     TrayEvent::None,
                 )
-                .item(format!("📏Dpi: {}", dev.dpi).as_str(), TrayEvent::None)
+                .item(format!("┣📏{} dpi", dev.dpi).as_str(), TrayEvent::None)
                 .item(
-                    format!("⏱Poll: {}", dev.polling_rate_level).as_str(),
+                    format!(
+                        "┣⏱{}",
+                        TryInto::<PollLevel>::try_into(dev.polling_rate_level).unwrap_or_default()
+                    )
+                    .as_str(),
                     TrayEvent::None,
                 )
-                .item(format!("🛈 {}", dev.version).as_str(), TrayEvent::None)
+                .item(format!("┗🛈{}", dev.version).as_str(), TrayEvent::None)
                 .separator();
         }
         mb.item("Configure", TrayEvent::Configure)
@@ -100,7 +161,7 @@ impl Tray {
         self.dev = Some(dev);
         if let Some(dev) = &mut self.dev {
             dev.battery = dev.battery.clamp(0, 100);
-            let mut tis = TrayIconStatus::Passive;
+            let mut tis = TrayIconStatus::Active;
             self.tray_icon
                 .set_tooltip(
                     format!(
