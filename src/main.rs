@@ -1,26 +1,47 @@
 use tokio::time;
 
-use crate::{keychron_hid::KeychronHid, tray::Tray};
+use crate::{keychron_hid::KeychronHid, tray::Tray, udev::udev_rule_install};
 use std::{error::Error, time::Duration};
 
 mod keychron_device;
 mod keychron_hid;
 mod report;
 mod tray;
+mod udev;
+
+const DEVICE_CHECK_PERIOD: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tray_app = Tray::new()?;
-    let mut keychron_hid = KeychronHid::new()?;
-    let dev = loop {
-        let devs = keychron_hid.list_compatible_devices()?;
-        if devs.is_empty() {
-            time::sleep(Duration::from_secs(5)).await;
+    let (keychron_hid, mut report_rx, listen_handle, dev) = loop {
+        let mut keychron_hid = KeychronHid::new()?;
+        let dev = loop {
+            let devs = keychron_hid.list_compatible_devices()?;
+            if devs.is_empty() {
+                time::sleep(DEVICE_CHECK_PERIOD).await;
+            }
+            break devs[0].clone();
+        };
+        match keychron_hid.listen(&dev) {
+            Ok((r, l)) => break (keychron_hid, r, l, dev),
+            Err(e) => {
+                if e.to_string()
+                    .to_lowercase()
+                    .find("permission denied")
+                    .is_some()
+                {
+                    tray_app.needs_udev_rules(true);
+                    if !tray_app.notify_udev_rules().await.is_ok_and(|r| r) {
+                        time::sleep(DEVICE_CHECK_PERIOD).await;
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
         }
-        break devs[0].clone();
     };
-
-    let (mut report_rx, listen_handle) = keychron_hid.listen(&dev)?;
+    tray_app.needs_udev_rules(false);
     let report_handle: tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>> =
         tokio::spawn(async move {
             loop {

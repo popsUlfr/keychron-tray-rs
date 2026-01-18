@@ -7,7 +7,6 @@ use std::error::Error;
 use tokio::{sync::watch, task};
 
 pub const KEYCHRON_VENDOR_ID: u16 = 0x3434;
-pub const KEYCHRON_PRODUCT_ID: u16 = 0xd028;
 pub const KEYCHRON_USAGE: u16 = 0x1;
 pub const KEYCHRON_USAGE_PAGE: u16 = 0xffc1;
 

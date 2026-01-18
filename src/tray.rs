@@ -1,8 +1,10 @@
 use std::{error, fmt, process::exit, str};
 
-use notify_rust::Notification;
+use notify_rust::{Notification, Timeout};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use trayicon::{Icon, MenuBuilder, TrayIcon, TrayIconBuilder, TrayIconStatus};
+
+use crate::udev;
 
 const KEYCHRON_URL: &str = "https://launcher.keychron.com";
 const ICON_NORMAL_BYTES: &[u8] = include_bytes!("../assets/Keychron_icon.ico");
@@ -15,6 +17,7 @@ const ICON_BAT_LOW_BYTES: &[u8] = include_bytes!("../assets/Keychron_icon_bat_lo
 enum TrayEvent {
     #[default]
     None,
+    UdevRules,
     Configure,
     Close,
 }
@@ -89,6 +92,7 @@ pub struct Tray {
     icon: Icon,
     bat_icons: [Icon; 4],
     dev: Option<Device>,
+    install_udev_rules: bool,
     changes: usize,
 }
 
@@ -105,6 +109,11 @@ impl Tray {
             .sender(move |evt: &TrayEvent| match evt {
                 TrayEvent::Configure => {
                     webbrowser::open(KEYCHRON_URL).ok();
+                }
+                TrayEvent::UdevRules => {
+                    tokio::spawn(async move {
+                        let _ = udev::udev_rule_install().await;
+                    });
                 }
                 TrayEvent::Close => {
                     exit(0);
@@ -124,12 +133,16 @@ impl Tray {
             icon: icon_normal,
             bat_icons: [icon_bat_low, icon_bat_half, icon_bat_good, icon_bat_full],
             dev: None,
+            install_udev_rules: false,
             changes: 0,
         })
     }
 
     fn gen_menu(&self) -> MenuBuilder<TrayEvent> {
         let mut mb = MenuBuilder::new();
+        if self.install_udev_rules {
+            mb = mb.item("Install udev rules", TrayEvent::UdevRules);
+        }
         if let Some(dev) = &self.dev {
             mb = mb
                 .item(format!("🖱️{}", dev.name).as_str(), TrayEvent::None)
@@ -220,6 +233,42 @@ impl Tray {
             self.tray_icon.set_status(tis).ok();
 
             self.tray_icon.set_menu(&self.gen_menu()).ok();
+        }
+    }
+
+    pub fn needs_udev_rules(&mut self, b: bool) {
+        self.install_udev_rules = b;
+        self.tray_icon.set_menu(&self.gen_menu()).ok();
+    }
+
+    pub async fn notify_udev_rules(&mut self) -> Result<bool, Box<dyn error::Error + Send + Sync>> {
+        let mut do_it = false;
+        match Notification::new()
+            .appname("Keychron")
+            .action("udev", "Install udev rules")
+            .hint(notify_rust::Hint::Resident(true))
+            .summary("udev rules needed to access devices")
+            .icon("input-mouse")
+            .urgency(notify_rust::Urgency::Low)
+            .timeout(Timeout::Never)
+            .show_async()
+            .await
+        {
+            Ok(n) => {
+                n.wait_for_action(|action| match action {
+                    "udev" => {
+                        do_it = true;
+                    }
+                    "__closed" => (),
+                    _ => (),
+                });
+            }
+            Err(_) => (),
+        };
+        if do_it {
+            udev::udev_rule_install().await.map(|_| true)
+        } else {
+            Ok(false)
         }
     }
 }
