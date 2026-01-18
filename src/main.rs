@@ -1,10 +1,7 @@
-use tokio::{
-    sync::{Mutex, RwLock},
-    time,
-};
+use tokio::{sync::Mutex, time};
 
-use crate::{keychron_hid::KeychronHid, tray::Tray, udev::udev_rule_install};
-use std::{cell::RefCell, error::Error, rc::Rc, sync::Arc, time::Duration};
+use crate::{keychron_hid::KeychronHid, tray::Tray};
+use std::{error::Error, sync::Arc, time::Duration};
 
 mod keychron_device;
 mod keychron_hid;

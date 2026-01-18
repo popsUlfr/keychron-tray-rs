@@ -136,6 +136,7 @@ impl Report {
         )
     }
 
+    #[allow(dead_code)]
     pub fn vendor_product_id(&self) -> u32 {
         65536u32 * self.vid as u32 + self.pid as u32
     }
