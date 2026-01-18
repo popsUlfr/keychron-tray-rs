@@ -1,5 +1,6 @@
 use std::{error, fmt, process::exit, str};
 
+use notify_rust::Notification;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use trayicon::{Icon, MenuBuilder, TrayIcon, TrayIconBuilder, TrayIconStatus};
 
@@ -48,11 +49,11 @@ impl error::Error for ParsePollLevelError {
 impl fmt::Display for PollLevel {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            PollLevel::Level0 => f.write_str("⚪  "),
-            PollLevel::Level1 => f.write_str(" 🔵 "),
-            PollLevel::Level2 => f.write_str("  🔴"),
-            PollLevel::Level3 => f.write_str("⚪🔵 "),
-            PollLevel::Level4 => f.write_str("⚪ 🔴"),
+            PollLevel::Level0 => f.write_str("⚪"),
+            PollLevel::Level1 => f.write_str("🔵"),
+            PollLevel::Level2 => f.write_str("🔴"),
+            PollLevel::Level3 => f.write_str("⚪🔵"),
+            PollLevel::Level4 => f.write_str("⚪🔴"),
             PollLevel::Level5 => f.write_str("⚪🔵🔴"),
         }
     }
@@ -88,6 +89,7 @@ pub struct Tray {
     icon: Icon,
     bat_icons: [Icon; 4],
     dev: Option<Device>,
+    changes: usize,
 }
 
 impl Tray {
@@ -122,6 +124,7 @@ impl Tray {
             icon: icon_normal,
             bat_icons: [icon_bat_low, icon_bat_half, icon_bat_good, icon_bat_full],
             dev: None,
+            changes: 0,
         })
     }
 
@@ -143,7 +146,8 @@ impl Tray {
                 .item(format!("┣📏{} dpi", dev.dpi).as_str(), TrayEvent::None)
                 .item(
                     format!(
-                        "┣⏱{}",
+                        "┣⏱{}:{}",
+                        dev.polling_rate_level,
                         TryInto::<PollLevel>::try_into(dev.polling_rate_level).unwrap_or_default()
                     )
                     .as_str(),
@@ -158,6 +162,37 @@ impl Tray {
     }
 
     pub fn update_device(&mut self, dev: Device) {
+        if let Some(old_dev) = &self.dev {
+            if self.changes > 0 {
+                if old_dev.dpi != dev.dpi {
+                    Notification::new()
+                        .appname(&dev.name.as_str())
+                        .summary(format!("{} dpi", dev.dpi).as_str())
+                        .icon("input-mouse")
+                        .urgency(notify_rust::Urgency::Low)
+                        .show()
+                        .ok();
+                }
+                if old_dev.polling_rate_level != dev.polling_rate_level {
+                    Notification::new()
+                        .appname(&dev.name.as_str())
+                        .summary(
+                            format!(
+                                "Polling rate {} {}",
+                                dev.polling_rate_level,
+                                TryInto::<PollLevel>::try_into(dev.polling_rate_level)
+                                    .unwrap_or_default()
+                            )
+                            .as_str(),
+                        )
+                        .icon("input-mouse")
+                        .urgency(notify_rust::Urgency::Low)
+                        .show()
+                        .ok();
+                }
+            }
+            self.changes += 1;
+        }
         self.dev = Some(dev);
         if let Some(dev) = &mut self.dev {
             dev.battery = dev.battery.clamp(0, 100);
