@@ -82,6 +82,7 @@ impl str::FromStr for PollLevel {
 pub struct Device {
     pub name: String,
     pub version: String,
+    pub connected: bool,
     pub battery: u8,
     pub dpi: u16,
     pub polling_rate_level: u8,
@@ -175,6 +176,15 @@ impl Tray {
     }
 
     pub fn update_device(&mut self, dev: Device) {
+        if !dev.connected {
+            self.dev = None;
+            self.changes = 0;
+            self.tray_icon.set_tooltip("Keychron").ok();
+            self.tray_icon.set_status(TrayIconStatus::Passive).ok();
+            self.tray_icon.set_icon(&self.icon).ok();
+            self.tray_icon.set_menu(&self.gen_menu()).ok();
+            return;
+        }
         if let Some(old_dev) = &self.dev {
             if self.changes > 0 {
                 if old_dev.dpi != dev.dpi {

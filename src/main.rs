@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let devs = keychron_hid.list_compatible_devices()?;
             if devs.is_empty() {
                 time::sleep(DEVICE_CHECK_PERIOD).await;
+                continue;
             }
             break devs[0].clone();
         };
@@ -53,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Err(_) => "".to_string(),
                     },
                     version: r.fr_version_string(),
+                    connected: !r.power.state,
                     battery: r.power.value,
                     dpi: *r
                         .dpi
