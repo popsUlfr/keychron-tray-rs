@@ -82,8 +82,8 @@ impl str::FromStr for PollLevel {
 pub struct Device {
     pub name: String,
     pub version: String,
-    pub connected: bool,
     pub battery: u8,
+    pub charging: bool,
     pub dpi: u16,
     pub polling_rate_level: u8,
 }
@@ -96,6 +96,9 @@ pub struct Tray {
     install_udev_rules: bool,
     changes: usize,
 }
+
+unsafe impl Send for Tray {}
+unsafe impl Sync for Tray {}
 
 impl Tray {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
@@ -151,7 +154,11 @@ impl Tray {
                 .item(
                     format!(
                         "┣{}{}%",
-                        if dev.battery <= 25 { "🪫" } else { "🔋" },
+                        if dev.charging {
+                            "⚡"
+                        } else {
+                            if dev.battery <= 25 { "🪫" } else { "🔋" }
+                        },
                         dev.battery
                     )
                     .as_str(),
@@ -175,16 +182,16 @@ impl Tray {
             .item("✖ Close", TrayEvent::Close)
     }
 
+    pub fn clear(&mut self) {
+        self.dev = None;
+        self.changes = 0;
+        self.tray_icon.set_tooltip("Keychron").ok();
+        self.tray_icon.set_status(TrayIconStatus::Passive).ok();
+        self.tray_icon.set_icon(&self.icon).ok();
+        self.tray_icon.set_menu(&self.gen_menu()).ok();
+    }
+
     pub fn update_device(&mut self, dev: Device) {
-        if !dev.connected {
-            self.dev = None;
-            self.changes = 0;
-            self.tray_icon.set_tooltip("Keychron").ok();
-            self.tray_icon.set_status(TrayIconStatus::Passive).ok();
-            self.tray_icon.set_icon(&self.icon).ok();
-            self.tray_icon.set_menu(&self.gen_menu()).ok();
-            return;
-        }
         if let Some(old_dev) = &self.dev {
             if self.changes > 0 {
                 if old_dev.dpi != dev.dpi {
@@ -218,13 +225,19 @@ impl Tray {
         }
         self.dev = Some(dev);
         if let Some(dev) = &mut self.dev {
-            dev.battery = dev.battery.clamp(0, 100);
+            if dev.battery != 255 {
+                dev.battery = dev.battery.clamp(0, 100);
+            }
             let mut tis = TrayIconStatus::Active;
             self.tray_icon
                 .set_tooltip(
                     format!(
                         "{}{}%",
-                        if dev.battery <= 25 { "🪫" } else { "🔋" },
+                        if dev.charging {
+                            "⚡"
+                        } else {
+                            if dev.battery <= 25 { "🪫" } else { "🔋" }
+                        },
                         dev.battery
                     )
                     .as_str(),
@@ -251,7 +264,7 @@ impl Tray {
         self.tray_icon.set_menu(&self.gen_menu()).ok();
     }
 
-    pub async fn notify_udev_rules(&mut self) -> Result<bool, Box<dyn error::Error + Send + Sync>> {
+    pub async fn notify_udev_rules(&self) -> Result<bool, Box<dyn error::Error + Send + Sync>> {
         let mut do_it = false;
         match Notification::new()
             .appname("Keychron")

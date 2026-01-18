@@ -1,5 +1,5 @@
 use crate::{
-    keychron_device::KeychronDevice,
+    keychron_device::{KeychronDevice, KeychronDeviceCategory},
     report::{Report, TryMerge},
 };
 use hidapi::{BusType, DeviceInfo, HidApi, HidError};
@@ -25,7 +25,7 @@ impl KeychronHid {
     pub fn list_compatible_devices(&mut self) -> Result<Vec<&DeviceInfo>, HidError> {
         self.hid_api.reset_devices()?;
         self.hid_api.add_devices(KEYCHRON_VENDOR_ID, 0)?;
-        Ok(self
+        let devs: Vec<&DeviceInfo> = self
             .hid_api
             .device_list()
             .filter(|d| {
@@ -34,7 +34,24 @@ impl KeychronHid {
                     && d.usage_page() == KEYCHRON_USAGE_PAGE
                     && TryInto::<KeychronDevice>::try_into(d.product_id()).is_ok()
             })
-            .collect())
+            .collect();
+        if devs.len() < 2 {
+            Ok(devs)
+        } else {
+            let devs_f: Vec<&DeviceInfo> = devs
+                .iter()
+                .filter(|d| {
+                    TryInto::<KeychronDevice>::try_into(d.product_id())
+                        .is_ok_and(|kd| kd.device_type() != KeychronDeviceCategory::Receiver)
+                })
+                .cloned()
+                .collect();
+            if !devs_f.is_empty() {
+                Ok(devs_f)
+            } else {
+                Ok(devs)
+            }
+        }
     }
 
     pub fn listen(
@@ -53,7 +70,12 @@ impl KeychronHid {
             let mut buf = [0u8; 64];
             let mut r = Report::default();
             loop {
-                let buf_size = hid_dev_read.read(&mut buf)?;
+                let buf_size = match hid_dev_read.read(&mut buf) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(e.into());
+                    }
+                };
                 if buf_size == 0 {
                     continue;
                 }
