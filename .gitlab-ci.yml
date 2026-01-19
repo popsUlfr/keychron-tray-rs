@@ -1,0 +1,161 @@
+# Requirements:
+# - GPG_PRIVATE_KEY: CI/CD variable containing a base64-encoded GPG private key for signing.
+# - GPG_PASSPHRASE: CI/CD variable with the passphrase for the above key.
+# - GPG_KEY_ID: CI/CD variable with the id of the key to use for signing.
+#
+# Usage: Create and push a Git tag (e.g., `v1.0.0`) to trigger the release pipeline.
+---
+variables:
+  RUSTFLAGS: "-Zlocation-detail=none -Zfmt-debug=none -Zunstable-options -Cpanic=immediate-abort"
+  RUSTARGS: "-Z build-std=std,panic_abort -Z build-std-features=optimize_for_size"
+  BIN_NAME: "keychron-tray-rs"
+  CARGO_PROFILE: "release"
+  RUST_NIGHTLY_DATE: "2026-01-16"
+  RELEASE_NOTES_TEMPLATE: ".gitlab/release_template.md"
+
+# Cache for faster builds
+cache:
+  key: "${CI_COMMIT_REF_SLUG}"
+  paths:
+    - target/
+    - .cargo/
+    - .rustup/
+
+# Single build job using a matrix for all targets
+.build_template: &build_template
+  stage: build
+  image: rust:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - set -euxo pipefail
+    # Install the specific nightly toolchain inside the container
+    - rustup toolchain install nightly-${RUST_NIGHTLY_DATE} --profile minimal
+    - rustup default nightly-${RUST_NIGHTLY_DATE}
+    - rustup component add rust-src
+    # Run target-specific setup
+    - source setup_for_target
+  script:
+    - set -euxo pipefail
+    - rustup target add $TARGET
+    - |
+      cargo build \
+        $RUSTARGS \
+        --target $TARGET \
+        --${CARGO_PROFILE}
+  artifacts:
+    name: "${CI_JOB_NAME}-${TARGET}"
+    paths:
+      - ${BINARY_PATH}
+    expire_in: 1 week
+
+# Target-specific setup script
+.setup_script: &setup_script |
+  setup_for_target() {
+    case "$1" in
+      "setup_linux_gnu")
+        # x86_64 GNU/Linux needs no special setup
+        ;;
+      "setup_linux_musl")
+        apt-get update && apt-get install -y musl-tools
+        export RUSTFLAGS="$RUSTFLAGS -C target-feature=+crt-static"
+        ;;
+      "setup_linux_aarch64_gnu")
+        apt-get update && apt-get install -y gcc-aarch64-linux-gnu
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"
+        ;;
+      "setup_linux_aarch64_musl")
+        # Musl-specific variables ARE necessary for aarch64
+        apt-get update && apt-get install -y clang llvm musl-dev musl-tools
+        export CC_aarch64_unknown_linux_musl="clang"
+        export AR_aarch64_unknown_linux_musl="llvm-ar"
+        export RUSTFLAGS="$RUSTFLAGS -C linker=clang -C link-arg=--target=aarch64-unknown-linux-musl"
+        ;;
+      "setup_windows")
+        if [ "$TARGET" = "x86_64-pc-windows-msvc" ]; then
+          apt-get update && apt-get install -y gcc-mingw-w64-x86-64
+        fi
+        # aarch64-pc-windows-msvc uses the MSVC toolchain bundled with Rust
+        ;;
+    esac
+  }
+
+# --- Build Matrix Definition ---
+build:matrix:
+  <<: *build_template
+  parallel:
+    matrix:
+      # Each item here creates a separate job with the given variables.
+      - TARGET: x86_64-unknown-linux-gnu
+        BINARY_PATH: "target/x86_64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}"
+        SETUP_FUNCTION: "setup_linux_gnu"
+      - TARGET: x86_64-unknown-linux-musl
+        BINARY_PATH: "target/x86_64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}"
+        SETUP_FUNCTION: "setup_linux_musl"
+      - TARGET: aarch64-unknown-linux-gnu
+        BINARY_PATH: "target/aarch64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}"
+        SETUP_FUNCTION: "setup_linux_aarch64_gnu"
+      - TARGET: aarch64-unknown-linux-musl
+        BINARY_PATH: "target/aarch64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}"
+        SETUP_FUNCTION: "setup_linux_aarch64_musl"
+      - TARGET: x86_64-pc-windows-msvc
+        BINARY_PATH: "target/x86_64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe"
+        SETUP_FUNCTION: "setup_windows"
+      - TARGET: aarch64-pc-windows-msvc
+        BINARY_PATH: "target/aarch64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe"
+        SETUP_FUNCTION: "setup_windows"
+
+# --- Release Creation Job ---
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  needs:
+    - job: build:matrix
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - set -euxo pipefail
+    - apk add --no-cache gnupg coreutils gettext
+    # Import GPG key from CI variables
+    - echo "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+    - mkdir -p dist
+  script:
+    - set -euxo pipefail
+    # 1. Copy all binaries to the dist/ folder with descriptive names
+    - cp "target/x86_64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-gnu"
+    - cp "target/x86_64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-musl"
+    - cp "target/aarch64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-gnu"
+    - cp "target/aarch64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-musl"
+    - cp "target/x86_64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-x86_64.exe"
+    - cp "target/aarch64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-aarch64.exe"
+
+    # 2. Generate and sign INDIVIDUAL SHA256 checksum files for each binary
+    - cd dist
+    - for file in *; do
+      if [ -f "$file" ]; then
+      sha256sum "$file" > "${file}.sha256";
+      echo "$GPG_PASSPHRASE" | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign --armor --local-user "$GPG_KEY_ID" "${file}";
+      fi
+      done
+    - cd ..
+
+    # 3. Authenticate glab using the CI job token
+    - glab auth login --hostname $CI_SERVER_HOST --job-token $CI_JOB_TOKEN
+
+    # 4. Generate release notes from template
+    - |
+      if [ ! -f "${RELEASE_NOTES_TEMPLATE}" ]; then
+        echo "ERROR: Template file '${RELEASE_NOTES_TEMPLATE}' not found."
+        exit 1
+      fi
+      export TEMPLATE_DATE=$(date -u +'%Y-%m-%d')
+      export TEMPLATE_VERSION="$CI_COMMIT_TAG"
+      export TEMPLATE_RUST_TOOLCHAIN="nightly-${RUST_NIGHTLY_DATE}"
+      envsubst < "${RELEASE_NOTES_TEMPLATE}" > /tmp/release_notes_generated.md
+      echo "Generated release notes:"
+      cat /tmp/release_notes_generated.md
+
+    # 5. Create the release using the generated notes and upload all assets
+    - glab release create $CI_COMMIT_TAG --name "Release $CI_COMMIT_TAG" --notes-file /tmp/release_notes_generated.md
+    - glab release upload $CI_COMMIT_TAG dist/*
