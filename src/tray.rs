@@ -114,6 +114,7 @@ impl Tray {
         let icon_bat_low = Icon::from_buffer(ICON_BAT_LOW_BYTES, None, None).unwrap();
         let mut tray_icon = TrayIconBuilder::new()
             .icon(icon_normal.clone())
+            .title("Keychron")
             .tooltip("Keychron")
             .sender(move |evt: &TrayEvent| match evt {
                 TrayEvent::Configure => {
