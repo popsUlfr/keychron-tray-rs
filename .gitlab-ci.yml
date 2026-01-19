@@ -33,45 +33,12 @@ cache:
     - if: $CI_COMMIT_TAG
   script:
     - set -euxo pipefail
-
+    - apt-get update && apt-get install -y libudev-dev
     # 1. Install the specific nightly toolchain
     - rustup toolchain install nightly-${RUST_NIGHTLY_DATE} --profile minimal
     - rustup default nightly-${RUST_NIGHTLY_DATE}
     - rustup component add rust-src
-
-    # 2. Target-specific setup based on $TARGET variable
-    - |
-      case "$TARGET" in
-        x86_64-unknown-linux-gnu)
-          apt-get update && apt-get install -y libudev-dev
-          ;;
-        x86_64-unknown-linux-musl)
-          apt-get update && apt-get install -y libudev-dev musl-tools
-          export RUSTFLAGS="${RUSTFLAGS} -C target-feature=+crt-static"
-          ;;
-        aarch64-unknown-linux-gnu)
-          apt-get update && apt-get install -y libudev-dev gcc-aarch64-linux-gnu
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"
-          ;;
-        aarch64-unknown-linux-musl)
-          apt-get update && apt-get install -y clang libudev-dev llvm musl-dev musl-tools
-          export CC_aarch64_unknown_linux_musl="clang"
-          export AR_aarch64_unknown_linux_musl="llvm-ar"
-          export RUSTFLAGS="${RUSTFLAGS} -C linker=clang -C link-arg=--target=aarch64-unknown-linux-musl"
-          ;;
-        x86_64-pc-windows-msvc)
-          apt-get update && apt-get install -y gcc-mingw-w64-x86-64
-          ;;
-        aarch64-pc-windows-msvc)
-          # No special packages needed for Windows ARM64 (MSVC toolchain is bundled)
-          ;;
-        *)
-          echo "ERROR: Unknown target: $TARGET"
-          exit 1
-          ;;
-      esac
-
-    # 3. Add the target and build
+    # 2. Add the target and build
     - rustup target add $TARGET
     - |
       cargo build \
@@ -90,11 +57,11 @@ build:
   parallel:
     matrix:
       - TARGET: x86_64-unknown-linux-gnu
-      - TARGET: x86_64-unknown-linux-musl
-      - TARGET: aarch64-unknown-linux-gnu
-      - TARGET: aarch64-unknown-linux-musl
-      - TARGET: x86_64-pc-windows-msvc
-      - TARGET: aarch64-pc-windows-msvc
+      #- TARGET: x86_64-unknown-linux-musl
+      #- TARGET: aarch64-unknown-linux-gnu
+      #- TARGET: aarch64-unknown-linux-musl
+      #- TARGET: x86_64-pc-windows-msvc
+      #- TARGET: aarch64-pc-windows-msvc
 
 # --- Release Creation Job ---
 release:
@@ -115,11 +82,11 @@ release:
 
     # 2. Copy all binaries to the dist/ folder with descriptive names
     - cp "target/x86_64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-gnu"
-    - cp "target/x86_64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-musl"
-    - cp "target/aarch64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-gnu"
-    - cp "target/aarch64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-musl"
-    - cp "target/x86_64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-x86_64.exe"
-    - cp "target/aarch64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-aarch64.exe"
+    #- cp "target/x86_64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-musl"
+    #- cp "target/aarch64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-gnu"
+    #- cp "target/aarch64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-musl"
+    #- cp "target/x86_64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-x86_64.exe"
+    #- cp "target/aarch64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-aarch64.exe"
 
     # 3. Generate and sign INDIVIDUAL SHA256 checksum files for each binary
     - cd dist
