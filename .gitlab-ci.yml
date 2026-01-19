@@ -43,18 +43,18 @@ cache:
     - |
       case "$TARGET" in
         x86_64-unknown-linux-gnu)
-          # x86_64 GNU/Linux needs no special setup
+          apt-get update && apt-get install -y libudev-dev
           ;;
         x86_64-unknown-linux-musl)
-          apt-get update && apt-get install -y musl-tools
+          apt-get update && apt-get install -y libudev-dev musl-tools
           export RUSTFLAGS="${RUSTFLAGS} -C target-feature=+crt-static"
           ;;
         aarch64-unknown-linux-gnu)
-          apt-get update && apt-get install -y gcc-aarch64-linux-gnu
+          apt-get update && apt-get install -y libudev-dev gcc-aarch64-linux-gnu
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"
           ;;
         aarch64-unknown-linux-musl)
-          apt-get update && apt-get install -y clang llvm musl-dev musl-tools
+          apt-get update && apt-get install -y clang libudev-dev llvm musl-dev musl-tools
           export CC_aarch64_unknown_linux_musl="clang"
           export AR_aarch64_unknown_linux_musl="llvm-ar"
           export RUSTFLAGS="${RUSTFLAGS} -C linker=clang -C link-arg=--target=aarch64-unknown-linux-musl"
