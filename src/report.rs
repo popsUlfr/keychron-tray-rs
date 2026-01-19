@@ -275,7 +275,7 @@ impl TryMerge<&[u8]> for Report {
                     self.sys_features.scroll_dir = ((value[4] >> 7) & 1) != 0;
                     self.debounce.value = value[54];
                     self.sleep.time = ((value[53] as u16) << 8) | (value[52] as u16);
-                    let level = if value[5] > 1 { value[5] - 1 } else { 0 };
+                    let level = value[5].saturating_sub(1);
                     self.polling_rate.level = [level, level, level];
                     //self.polling_rate.levels_val = [0, 1, 2, 3, 4, 5]; // why ?
                     //self.polling_rate.level_num = report_rate_max;

@@ -1,9 +1,12 @@
 use std::{error, fmt, process::exit, str};
 
-use notify_rust::{Notification, Timeout};
+use notify_rust::Notification;
+#[cfg(target_os = "linux")]
+use notify_rust::Timeout;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use trayicon::{Icon, MenuBuilder, TrayIcon, TrayIconBuilder, TrayIconStatus};
 
+#[cfg(target_os = "linux")]
 use crate::udev;
 
 const KEYCHRON_URL: &str = "https://launcher.keychron.com";
@@ -17,6 +20,7 @@ const ICON_BAT_LOW_BYTES: &[u8] = include_bytes!("../assets/Keychron_icon_bat_lo
 enum TrayEvent {
     #[default]
     None,
+    #[cfg(target_os = "linux")]
     UdevRules,
     Configure,
     Close,
@@ -93,6 +97,7 @@ pub struct Tray {
     icon: Icon,
     bat_icons: [Icon; 4],
     dev: Option<Device>,
+    #[cfg(target_os = "linux")]
     install_udev_rules: bool,
     changes: usize,
 }
@@ -114,6 +119,7 @@ impl Tray {
                 TrayEvent::Configure => {
                     webbrowser::open(KEYCHRON_URL).ok();
                 }
+                #[cfg(target_os = "linux")]
                 TrayEvent::UdevRules => {
                     tokio::spawn(async move {
                         let _ = udev::udev_rule_install().await;
@@ -133,10 +139,11 @@ impl Tray {
             .build()?;
         tray_icon.set_status(trayicon::TrayIconStatus::Active).ok();
         Ok(Tray {
-            tray_icon: tray_icon,
+            tray_icon,
             icon: icon_normal,
             bat_icons: [icon_bat_low, icon_bat_half, icon_bat_good, icon_bat_full],
             dev: None,
+            #[cfg(target_os = "linux")]
             install_udev_rules: false,
             changes: 0,
         })
@@ -144,6 +151,7 @@ impl Tray {
 
     fn gen_menu(&self) -> MenuBuilder<TrayEvent> {
         let mut mb = MenuBuilder::new();
+        #[cfg(target_os = "linux")]
         if self.install_udev_rules {
             mb = mb.item("Install udev rules", TrayEvent::UdevRules);
         }
@@ -196,7 +204,7 @@ impl Tray {
             if self.changes > 0 {
                 if old_dev.dpi != dev.dpi {
                     Notification::new()
-                        .appname(&dev.name.as_str())
+                        .appname(dev.name.as_str())
                         .summary(format!("{} dpi", dev.dpi).as_str())
                         .icon("input-mouse")
                         .urgency(notify_rust::Urgency::Low)
@@ -205,7 +213,7 @@ impl Tray {
                 }
                 if old_dev.polling_rate_level != dev.polling_rate_level {
                     Notification::new()
-                        .appname(&dev.name.as_str())
+                        .appname(dev.name.as_str())
                         .summary(
                             format!(
                                 "Polling rate {} {}",
@@ -259,14 +267,16 @@ impl Tray {
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub fn needs_udev_rules(&mut self, b: bool) {
         self.install_udev_rules = b;
         self.tray_icon.set_menu(&self.gen_menu()).ok();
     }
 
+    #[cfg(target_os = "linux")]
     pub async fn notify_udev_rules(&self) -> Result<bool, Box<dyn error::Error + Send + Sync>> {
         let mut do_it = false;
-        match Notification::new()
+        if let Ok(n) = Notification::new()
             .appname("Keychron")
             .action("udev", "Install udev rules")
             .hint(notify_rust::Hint::Resident(true))
@@ -277,16 +287,13 @@ impl Tray {
             .show_async()
             .await
         {
-            Ok(n) => {
-                n.wait_for_action(|action| match action {
-                    "udev" => {
-                        do_it = true;
-                    }
-                    "__closed" => (),
-                    _ => (),
-                });
-            }
-            Err(_) => (),
+            n.wait_for_action(|action| match action {
+                "udev" => {
+                    do_it = true;
+                }
+                "__closed" => (),
+                _ => (),
+            });
         };
         if do_it {
             udev::udev_rule_install().await.map(|_| true)

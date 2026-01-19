@@ -7,6 +7,7 @@ mod keychron_device;
 mod keychron_hid;
 mod report;
 mod tray;
+#[cfg(target_os = "linux")]
 mod udev;
 
 const DEVICE_CHECK_PERIOD: Duration = Duration::from_secs(5);
@@ -32,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match keychron_hid.listen(&dev) {
                 Ok((r, l)) => break (keychron_hid, r, l, dev),
                 Err(e) => {
+                    #[cfg(target_os = "linux")]
                     if e.to_string()
                         .to_lowercase()
                         .find("permission denied")
@@ -45,9 +47,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         return Err(e.into());
                     }
+                    #[cfg(not(target_os = "linux"))]
+                    return Err(e.into());
                 }
             }
         };
+        #[cfg(target_os = "linux")]
         {
             let mut tray_app_lock = tray_app.lock().await;
             tray_app_lock.needs_udev_rules(false);
