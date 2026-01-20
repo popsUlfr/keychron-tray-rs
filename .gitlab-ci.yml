@@ -12,97 +12,116 @@ variables:
   CARGO_PROFILE: "release"
   RUST_NIGHTLY_DATE: "2026-01-16"
   RELEASE_NOTES_TEMPLATE: ".gitlab/release_template.md"
+  ALPINE_APK_URL: "https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v3.0.3/x86_64/apk.static"
+  ALPINE_APK_FLAGS: "-X https://dl-cdn.alpinelinux.org/alpine/v3.23/main -X https://dl-cdn.alpinelinux.org/alpine/v3.23/community --cache=no --allow-untrusted"
+  TARGETS: "x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl"
+  DISTDIR: "dist"
 
 stages:
   - build
   - release
 
-# Cache for faster builds
-cache:
-  key: "${CI_COMMIT_REF_SLUG}"
-  paths:
-    - target/
-    - .cargo/
-    - .rustup/
-
-# Single build job using a matrix for all targets
-.build_template: &build_template
+linux:build:
   stage: build
+  variables:
+    CFLAGS: "-Os -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection"
+    CXXFLAGS: "$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+    LDFLAGS: "-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs"
   image: rust:latest
   rules:
     - if: $CI_COMMIT_TAG
   script:
-    - set -euxo pipefail
-    - apt-get update && apt-get install -y libudev-dev
-    # 1. Install the specific nightly toolchain
-    - rustup toolchain install nightly-${RUST_NIGHTLY_DATE} --profile minimal
-    - rustup default nightly-${RUST_NIGHTLY_DATE}
-    - rustup component add rust-src
-    # 2. Add the target and build
-    - rustup target add $TARGET
     - |
-      cargo build \
-        $RUSTARGS \
-        --target $TARGET \
-        --${CARGO_PROFILE}
+      export WORKDIR="$PWD"
+      dpkg --add-architecture arm64
+      apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
+        musl-dev musl-dev:arm64 musl-tools gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libudev-dev libudev-dev:arm64
+      # source <(dpkg-buildflags --export=sh)
+      export PKG_CONFIG_ALLOW_CROSS=1
+      export PKG_CONFIG_ALL_STATIC=1
+      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
+      rustup toolchain install nightly-"$RUST_NIGHTLY_DATE"
+      rustup default nightly-"$RUST_NIGHTLY_DATE"
+      rustup component add rust-src
+
+      mkdir -p "$DISTDIR"
+
+      # glibc builds
+      gnu_targets=()
+      for t in $TARGETS ; do [[ "${t##*-}" == gnu ]] && gnu_targets+=("$t") ; done
+      for target in "${gnu_targets[@]}"; do
+        rustup target add "$target"
+        cargo clean
+        cargo build $RUSTARGS --target "$target" --"$CARGO_PROFILE"
+        cp -a target/"$target"/"$CARGO_PROFILE"/"$BIN_NAME" "$DISTDIR"/"$BIN_NAME"-"$target"
+      done
+
+
+      # musl builds
+      export CFLAGS="$CFLAGS --static"
+      export CXXFLAGS="$CXXFLAGS --static"
+      export LDFLAGS="$LDFLAGS -static"
+
+      cd /tmp
+      wget "$ALPINE_APK_URL"
+      chmod +x apk.static
+
+      musl_targets=()
+      for t in "${TARGETS[@]}" ; do [[ "${t##*-}" == musl ]] && musl_targets+=("$t") ; done
+      for target in "${musl_targets[@]}"; do
+        arch="${target%%-*}"
+        mkdir -p /tmp/out
+        cd /tmp
+        ./apk.static fetch \
+          $ALPINE_APK_FLAGS \
+          --arch "$arch" libudev-zero libudev-zero-dev linux-headers musl musl-dev
+        ./apk.static extract --cache=no --allow-untrusted --force-overwrite --destination out *.apk
+        rm -f *.apk
+        cp -a out/usr/include/. /usr/include/"$arch"-linux-musl/
+        cp -a out/usr/lib/. /usr/lib/"$arch"-linux-musl/
+        rm -rf out
+        sed -i \
+          -e 's#^\(prefix=\).*$#\1/usr/include/'"$arch"'-linux-musl#g' \
+          -e 's#^\(exec_prefix=\).*$#\1/usr/lib/'"$arch"'-linux-musl#g' \
+          -e 's#^\(libdir=\).*$#\1${exec_prefix}#g' \
+          -e 's#^\(includedir=\).*$#\1${prefix}#g' /usr/lib/"$arch"-linux-musl/pkgconfig/*.pc
+        rustup target add "$target"
+        cd "$WORKDIR"
+        cargo clean
+        cargo build $RUSTARGS --target "$target" --"$CARGO_PROFILE"
+        cp -a target/"$target"/"$CARGO_PROFILE"/"$BIN_NAME" "$DISTDIR"/"$BIN_NAME"-"$target"
+      done
   artifacts:
-    name: "${CI_JOB_NAME}-${TARGET}"
+    name: "${CI_JOB_NAME}"
     paths:
-      - "target/$TARGET/${CARGO_PROFILE}/${BIN_NAME}*"
+      - "${DISTDIR}/*"
     expire_in: 1 week
 
-# --- Build Matrix Definition ---
-build:
-  <<: *build_template
-  parallel:
-    matrix:
-      - TARGET: x86_64-unknown-linux-gnu
-      #- TARGET: x86_64-unknown-linux-musl
-      #- TARGET: aarch64-unknown-linux-gnu
-      #- TARGET: aarch64-unknown-linux-musl
-      #- TARGET: x86_64-pc-windows-msvc
-      #- TARGET: aarch64-pc-windows-msvc
-
-# --- Release Creation Job ---
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/cli:latest
   needs:
-    - job: build
-      artifacts: true
+    - job: linux:build
   rules:
     - if: $CI_COMMIT_TAG
   script:
-    - set -euxo pipefail
-
-    # 1. Setup: install packages, import GPG key, create directory
-    - apk add --no-cache gnupg coreutils gettext
-    - echo "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
-    - mkdir -p dist
-
-    # 2. Copy all binaries to the dist/ folder with descriptive names
-    - cp "target/x86_64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-gnu"
-    #- cp "target/x86_64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-x86_64-musl"
-    #- cp "target/aarch64-unknown-linux-gnu/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-gnu"
-    #- cp "target/aarch64-unknown-linux-musl/${CARGO_PROFILE}/${BIN_NAME}" "dist/${BIN_NAME}-linux-aarch64-musl"
-    #- cp "target/x86_64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-x86_64.exe"
-    #- cp "target/aarch64-pc-windows-msvc/${CARGO_PROFILE}/${BIN_NAME}.exe" "dist/${BIN_NAME}-windows-aarch64.exe"
-
-    # 3. Generate and sign INDIVIDUAL SHA256 checksum files for each binary
-    - cd dist
-    - for file in *; do
-      if [ -f "$file" ]; then
-      sha256sum "$file" > "${file}.sha256";
-      echo "$GPG_PASSPHRASE" | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign --armor --local-user "$GPG_KEY_ID" "${file}";
-      fi
-      done
-    - cd ..
-
-    # 4. Authenticate glab using the CI job token
-    - glab auth login --hostname $CI_SERVER_HOST --job-token $CI_JOB_TOKEN
-
-    # 5. Generate release notes from template
     - |
+      set -euxo pipefail
+
+      apk update && apk add --no-cache gnupg coreutils gettext
+      echo "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+
+      cd "$DISTDIR"
+      for file in *; do
+        if [ -f "$file" ]; then
+          sha256sum "$file" > "${file}.sha256";
+          echo "$GPG_PASSPHRASE" | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign --armor --local-user "$GPG_KEY_ID" "${file}";
+        fi
+      done
+      cd -
+
       if [ ! -f "${RELEASE_NOTES_TEMPLATE}" ]; then
         echo "ERROR: Template file '${RELEASE_NOTES_TEMPLATE}' not found."
         exit 1
@@ -114,6 +133,8 @@ release:
       echo "Generated release notes:"
       cat /tmp/release_notes_generated.md
 
-    # 6. Create the release using the generated notes and upload all assets
-    - glab release create $CI_COMMIT_TAG --name "Release $CI_COMMIT_TAG" --notes-file /tmp/release_notes_generated.md
-    - glab release upload $CI_COMMIT_TAG dist/*
+      glab auth login --job-token "$CI_JOB_TOKEN" --hostname "$CI_SERVER_HOST"
+      glab release create "$CI_COMMIT_TAG" \
+        --name "Release $CI_COMMIT_TAG" \
+        --notes-file /tmp/release_notes_generated.md \
+        "$DISTDIR"/*
