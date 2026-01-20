@@ -66,6 +66,8 @@ linux:build:
       export CXXFLAGS="$CXXFLAGS --static"
       export LDFLAGS="$LDFLAGS -static"
 
+      rm -rf /root/.cargo
+
       cd /tmp
       wget "$ALPINE_APK_URL"
       chmod +x apk.static
