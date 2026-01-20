@@ -32,6 +32,8 @@ linux:build:
     - if: $CI_COMMIT_TAG
   script:
     - |
+      set -euxo pipefail
+
       export WORKDIR="$PWD"
       dpkg --add-architecture arm64
       apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
@@ -69,7 +71,7 @@ linux:build:
       chmod +x apk.static
 
       musl_targets=()
-      for t in "${TARGETS[@]}" ; do [[ "${t##*-}" == musl ]] && musl_targets+=("$t") ; done
+      for t in $TARGETS ; do [[ "${t##*-}" == musl ]] && musl_targets+=("$t") ; done
       for target in "${musl_targets[@]}"; do
         arch="${target%%-*}"
         mkdir -p /tmp/out
