@@ -57,43 +57,44 @@ linux:build:
         rustup target add "$target"
         cargo clean
         cargo build $RUSTARGS --target "$target" --"$CARGO_PROFILE"
-        cp -a target/"$target"/"$CARGO_PROFILE"/"$BIN_NAME" "$DISTDIR"/"$BIN_NAME"-"$target"
+        cp -a target/"$target"/"$CARGO_PROFILE"/"$BIN_NAME" "$DISTDIR"/"$BIN_NAME"-"$(readarray -d- -t t <<<"$target" && echo -n "${t[2]}-${t[0]}-${t[3]}")"
       done
 
       # musl builds
-      # export CFLAGS="$CFLAGS --static"
-      # export CXXFLAGS="$CXXFLAGS --static"
-      # export LDFLAGS="$LDFLAGS -static"
+      export CFLAGS="$CFLAGS --static"
+      export CXXFLAGS="$CXXFLAGS --static"
+      export LDFLAGS="$LDFLAGS -static"
 
-      # cd /tmp
-      # wget "$ALPINE_APK_URL"
-      # chmod +x apk.static
+      cd /tmp
+      wget "$ALPINE_APK_URL"
+      chmod +x apk.static
 
-      # musl_targets=()
-      # for t in $TARGETS ; do [[ "${t##*-}" == musl ]] && musl_targets+=("$t") ; done
-      # for target in "${musl_targets[@]}"; do
-      #   arch="${target%%-*}"
-      #   mkdir -p /tmp/out
-      #   cd /tmp
-      #   ./apk.static fetch \
-      #     $ALPINE_APK_FLAGS \
-      #     --arch "$arch" libudev-zero libudev-zero-dev linux-headers musl musl-dev
-      #   ./apk.static extract --cache=no --allow-untrusted --force-overwrite --destination out *.apk
-      #   rm -f *.apk
-      #   cp -a out/usr/include/. /usr/include/"$arch"-linux-musl/
-      #   cp -a out/usr/lib/. /usr/lib/"$arch"-linux-musl/
-      #   rm -rf out
-      #   sed -i \
-      #     -e 's#^\(prefix=\).*$#\1/usr/include/'"$arch"'-linux-musl#g' \
-      #     -e 's#^\(exec_prefix=\).*$#\1/usr/lib/'"$arch"'-linux-musl#g' \
-      #     -e 's#^\(libdir=\).*$#\1${exec_prefix}#g' \
-      #     -e 's#^\(includedir=\).*$#\1${prefix}#g' /usr/lib/"$arch"-linux-musl/pkgconfig/*.pc
-      #   rustup target add "$target"
-      #   cd "$WORKDIR"
-      #   cargo clean
-      #   cargo build $RUSTARGS --target "$target" --"$CARGO_PROFILE"
-      #   cp -a target/"$target"/"$CARGO_PROFILE"/"$BIN_NAME" "$DISTDIR"/"$BIN_NAME"-"$target"
-      # done
+      musl_targets=()
+      for t in $TARGETS ; do [[ "${t##*-}" == musl ]] && musl_targets+=("$t") ; done
+      for target in "${musl_targets[@]}"; do
+        arch="${target%%-*}"
+        mkdir -p /tmp/out
+        cd /tmp
+        ./apk.static fetch \
+          $ALPINE_APK_FLAGS \
+          --arch "$arch" libudev-zero libudev-zero-dev linux-headers musl musl-dev
+        ./apk.static extract --cache=no --allow-untrusted --force-overwrite --destination out *.apk
+        rm -f *.apk
+        cp -a out/usr/include/. /usr/include/"$arch"-linux-musl/
+        cp -a out/usr/lib/. /usr/lib/"$arch"-linux-musl/
+        rm -rf out
+        sed -i \
+          -e 's#^\(prefix=\).*$#\1/usr/include/'"$arch"'-linux-musl#g' \
+          -e 's#^\(exec_prefix=\).*$#\1/usr/lib/'"$arch"'-linux-musl#g' \
+          -e 's#^\(libdir=\).*$#\1${exec_prefix}#g' \
+          -e 's#^\(includedir=\).*$#\1${prefix}#g' /usr/lib/"$arch"-linux-musl/pkgconfig/*.pc
+        export PKG_CONFIG_PATH=/usr/lib/"$arch"-linux-musl/pkgconfig
+        rustup target add "$target"
+        cd "$WORKDIR"
+        cargo clean
+        cargo build $RUSTARGS --target "$target" --"$CARGO_PROFILE"
+        cp -a target/"$target"/"$CARGO_PROFILE"/"$BIN_NAME" "$DISTDIR"/"$BIN_NAME"-"$(readarray -d- -t t <<<"$target" && echo -n "${t[2]}-${t[0]}-${t[3]}")"
+      done
   artifacts:
     name: "${CI_JOB_NAME}"
     paths:
