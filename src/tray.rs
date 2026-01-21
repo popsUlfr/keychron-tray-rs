@@ -1,9 +1,10 @@
-use std::{error, fmt, process::exit, str};
+use std::{error, fmt, process::exit, str, sync::Arc};
 
 use notify_rust::Notification;
 #[cfg(target_os = "linux")]
 use notify_rust::Timeout;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use tokio::sync::{Mutex, mpsc};
 use trayicon::{Icon, MenuBuilder, TrayIcon, TrayIconBuilder, TrayIconStatus};
 
 #[cfg(target_os = "linux")]
@@ -24,6 +25,8 @@ enum TrayEvent {
     UdevRules,
     Configure,
     Close,
+    LeftClick,
+    RightClick,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
@@ -93,7 +96,7 @@ pub struct Device {
 }
 
 pub struct Tray {
-    tray_icon: TrayIcon<TrayEvent>,
+    tray_icon: Arc<Mutex<TrayIcon<TrayEvent>>>,
     icon: Icon,
     bat_icons: [Icon; 4],
     dev: Option<Device>,
@@ -112,33 +115,54 @@ impl Tray {
         let icon_bat_good = Icon::from_buffer(ICON_BAT_GOOD_BYTES, None, None).unwrap();
         let icon_bat_half = Icon::from_buffer(ICON_BAT_HALF_BYTES, None, None).unwrap();
         let icon_bat_low = Icon::from_buffer(ICON_BAT_LOW_BYTES, None, None).unwrap();
-        let mut tray_icon = TrayIconBuilder::new()
-            .icon(icon_normal.clone())
-            .title("Keychron")
-            .tooltip("Keychron")
-            .sender(move |evt: &TrayEvent| match evt {
-                TrayEvent::Configure => {
-                    webbrowser::open(KEYCHRON_URL).ok();
+        let (tx, mut rx) = mpsc::channel::<TrayEvent>(1);
+        let tray_icon = Arc::new(Mutex::new(
+            TrayIconBuilder::new()
+                .icon(icon_normal.clone())
+                .title("Keychron")
+                .tooltip("Keychron")
+                .on_click(TrayEvent::LeftClick)
+                .on_right_click(TrayEvent::RightClick)
+                .sender(move |evt: &TrayEvent| {
+                    tx.blocking_send(*evt).ok();
+                })
+                .menu(
+                    MenuBuilder::new()
+                        .item("Configure", TrayEvent::Configure)
+                        .item("✖ Close", TrayEvent::Close),
+                )
+                .build()?,
+        ));
+        let ti2 = tray_icon.clone();
+        tokio::spawn(async move {
+            {
+                let mut til = ti2.lock().await;
+                til.set_status(trayicon::TrayIconStatus::Active).ok();
+            }
+            while let Some(evt) = rx.recv().await {
+                match evt {
+                    TrayEvent::LeftClick | TrayEvent::RightClick => {
+                        let mut til = ti2.lock().await;
+                        til.show_menu().ok();
+                    }
+                    TrayEvent::Close => {
+                        exit(0);
+                    }
+                    TrayEvent::Configure => {
+                        tokio::task::spawn_blocking(move || {
+                            webbrowser::open(KEYCHRON_URL).ok();
+                        });
+                    }
+                    #[cfg(target_os = "linux")]
+                    TrayEvent::UdevRules => {
+                        tokio::spawn(async move {
+                            let _ = udev::udev_rule_install().await;
+                        });
+                    }
+                    _ => (),
                 }
-                #[cfg(target_os = "linux")]
-                TrayEvent::UdevRules => {
-                    tokio::spawn(async move {
-                        let _ = udev::udev_rule_install().await;
-                    });
-                }
-                TrayEvent::Close => {
-                    exit(0);
-                }
-                _ => (),
-            })
-            .menu(
-                MenuBuilder::new()
-                    .item("Configure", TrayEvent::Configure)
-                    .separator()
-                    .item("✖ Close", TrayEvent::Close),
-            )
-            .build()?;
-        tray_icon.set_status(trayicon::TrayIconStatus::Active).ok();
+            }
+        });
         Ok(Tray {
             tray_icon,
             icon: icon_normal,
@@ -159,7 +183,6 @@ impl Tray {
         if let Some(dev) = &self.dev {
             mb = mb
                 .item(format!("🖱️{}", dev.name).as_str(), TrayEvent::None)
-                .separator()
                 .item(
                     format!(
                         "┣{}{}%",
@@ -184,23 +207,22 @@ impl Tray {
                     TrayEvent::None,
                 )
                 .item(format!("┗🛈{}", dev.version).as_str(), TrayEvent::None)
-                .separator();
         }
         mb.item("Configure", TrayEvent::Configure)
-            .separator()
             .item("✖ Close", TrayEvent::Close)
     }
 
-    pub fn clear(&mut self) {
+    pub async fn clear(&mut self) {
         self.dev = None;
         self.changes = 0;
-        self.tray_icon.set_tooltip("Keychron").ok();
-        self.tray_icon.set_status(TrayIconStatus::Passive).ok();
-        self.tray_icon.set_icon(&self.icon).ok();
-        self.tray_icon.set_menu(&self.gen_menu()).ok();
+        let mut til = self.tray_icon.lock().await;
+        til.set_tooltip("Keychron").ok();
+        til.set_status(TrayIconStatus::Passive).ok();
+        til.set_icon(&self.icon).ok();
+        til.set_menu(&self.gen_menu()).ok();
     }
 
-    pub fn update_device(&mut self, dev: Device) {
+    pub async fn update_device(&mut self, dev: Device) {
         if let Some(old_dev) = &self.dev {
             if self.changes > 0 {
                 if old_dev.dpi != dev.dpi {
@@ -208,7 +230,6 @@ impl Tray {
                         .appname(dev.name.as_str())
                         .summary(format!("{} dpi", dev.dpi).as_str())
                         .icon("input-mouse")
-                        .urgency(notify_rust::Urgency::Low)
                         .show()
                         .ok();
                 }
@@ -225,7 +246,6 @@ impl Tray {
                             .as_str(),
                         )
                         .icon("input-mouse")
-                        .urgency(notify_rust::Urgency::Low)
                         .show()
                         .ok();
                 }
@@ -237,41 +257,42 @@ impl Tray {
             if dev.battery != 255 {
                 dev.battery = dev.battery.clamp(0, 100);
             }
+            let mut til = self.tray_icon.lock().await;
             let mut tis = TrayIconStatus::Active;
-            self.tray_icon
-                .set_tooltip(
-                    format!(
-                        "{}{}%",
-                        if dev.charging {
-                            "⚡"
-                        } else {
-                            if dev.battery <= 25 { "🪫" } else { "🔋" }
-                        },
-                        dev.battery
-                    )
-                    .as_str(),
+            til.set_tooltip(
+                format!(
+                    "{}{}%",
+                    if dev.charging {
+                        "⚡"
+                    } else {
+                        if dev.battery <= 25 { "🪫" } else { "🔋" }
+                    },
+                    dev.battery
                 )
-                .ok();
+                .as_str(),
+            )
+            .ok();
             if dev.battery <= 25 {
                 tis = TrayIconStatus::NeedsAttention;
-                self.tray_icon.set_icon(&self.bat_icons[0]).ok();
+                til.set_icon(&self.bat_icons[0]).ok();
             } else if dev.battery <= 50 {
-                self.tray_icon.set_icon(&self.bat_icons[1]).ok();
+                til.set_icon(&self.bat_icons[1]).ok();
             } else if dev.battery <= 75 {
-                self.tray_icon.set_icon(&self.bat_icons[2]).ok();
+                til.set_icon(&self.bat_icons[2]).ok();
             } else {
-                self.tray_icon.set_icon(&self.bat_icons[3]).ok();
+                til.set_icon(&self.bat_icons[3]).ok();
             }
-            self.tray_icon.set_status(tis).ok();
+            til.set_status(tis).ok();
 
-            self.tray_icon.set_menu(&self.gen_menu()).ok();
+            til.set_menu(&self.gen_menu()).ok();
         }
     }
 
     #[cfg(target_os = "linux")]
-    pub fn needs_udev_rules(&mut self, b: bool) {
+    pub async fn needs_udev_rules(&mut self, b: bool) {
         self.install_udev_rules = b;
-        self.tray_icon.set_menu(&self.gen_menu()).ok();
+        let mut til = self.tray_icon.lock().await;
+        til.set_menu(&self.gen_menu()).ok();
     }
 
     #[cfg(target_os = "linux")]
@@ -283,7 +304,6 @@ impl Tray {
             .hint(notify_rust::Hint::Resident(true))
             .summary("udev rules needed to access devices")
             .icon("input-mouse")
-            .urgency(notify_rust::Urgency::Low)
             .timeout(Timeout::Never)
             .show_async()
             .await

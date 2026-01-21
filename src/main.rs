@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         {
             let mut tray_app_lock = tray_app.lock().await;
-            tray_app_lock.clear();
+            tray_app_lock.clear().await;
         }
         let (keychron_hid, mut report_rx, listen_handle, dev) = loop {
             let mut keychron_hid = KeychronHid::new()?;
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .is_some()
                     {
                         let mut tray_app_lock = tray_app.lock().await;
-                        tray_app_lock.needs_udev_rules(true);
+                        tray_app_lock.needs_udev_rules(true).await;
                         if !tray_app_lock.notify_udev_rules().await.is_ok_and(|r| r) {
                             time::sleep(DEVICE_CHECK_PERIOD).await;
                         }
@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(target_os = "linux")]
         {
             let mut tray_app_lock = tray_app.lock().await;
-            tray_app_lock.needs_udev_rules(false);
+            tray_app_lock.needs_udev_rules(false).await;
         }
         let tray_app2 = tray_app.clone();
         let report_handle: tokio::task::JoinHandle<Result<(), Box<dyn Error + Send + Sync>>> =
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
                     let mut tray_app_lock = tray_app2.lock().await;
-                    tray_app_lock.update_device(dev);
+                    tray_app_lock.update_device(dev).await;
                 }
             });
 
