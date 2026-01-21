@@ -134,9 +134,8 @@ release:
       echo "Generated release notes:"
       cat /tmp/release_notes_generated.md
 
-      glab auth login --job-token "$CI_JOB_TOKEN" --hostname "$CI_SERVER_HOST"
+      glab auth login --token "$PROJECT_ACCESS_TOKEN" --hostname "$CI_SERVER_HOST"
       glab release create "$CI_COMMIT_TAG" \
-        --ref "$CI_COMMIT_TAG" \
         --name "Release $CI_COMMIT_TAG" \
         --notes-file /tmp/release_notes_generated.md \
         "$DISTDIR"/*
